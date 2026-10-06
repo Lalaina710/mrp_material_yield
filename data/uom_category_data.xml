@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        noupdate="1" : un upgrade du module ne doit PAS reecraser le choix de
+        l'administrateur. Si quelqu'un decoche Volume parce que ses recettes
+        n'ont plus de liquide, la mise a jour suivante ne doit pas le
+        recocher dans son dos.
+
+        Ne sont cochees ici que les deux categories standard, referencees par
+        xmlid — les seuls identifiants portables d'une base a l'autre.
+
+        Les categories issues de l'import Sage (creees par `name_create`,
+        donc sans xmlid, avec des ids propres a chaque base) ne peuvent PAS
+        figurer ici : leur id n'est pas portable. Elles se cochent a la main,
+        ou par une commande de configuration livree separement. Voir la
+        section « Prerequis » du README.
+    -->
+    <data noupdate="1">
+
+        <!-- Poids : la categorie de reference du bilan matiere. -->
+        <record id="uom.product_uom_categ_kgm" model="uom.category">
+            <field name="yield_mass_equivalent" eval="True"/>
+        </record>
+
+        <!--
+            Volume : erreur bornee par la densite. Eau = 1 (erreur nulle),
+            huile ~0,92 (~0,14 kg sur 1,7 L, soit ~0,3 point de rendement).
+            C'est ce caractere BORNE qui rend l'approximation defendable, et
+            qui n'existe pas pour les Unites.
+        -->
+        <record id="uom.product_uom_categ_vol" model="uom.category">
+            <field name="yield_mass_equivalent" eval="True"/>
+        </record>
+
+    </data>
+</odoo>

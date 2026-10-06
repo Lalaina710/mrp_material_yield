@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!--
+        Convention de precision pour tout ce fichier
+        ============================================
+        Les champs de pourcentage n'ont PAS d'attribut `digits` cote Python :
+        `Float.convert_to_cache` (fields.py:1655-1659) arrondirait la valeur
+        dans le cache ORM, stocke ou non. L'arrondi a 2 decimales est donc fait
+        ici, a l'affichage, via `digits="[16, 2]"` sur chaque noeud de champ
+        (float_field.js:126-131).
+
+        C'est ce qui permet a l'agregat `sum` de l'onglet Sous-produits
+        d'egaler exactement le rendement d'en-tete : le client additionne les
+        valeurs brutes puis formate le total (list_renderer.js:628, 631-641).
+    -->
+
+    <!-- ============================================================== -->
+    <!-- Formulaire OF : bloc rendement sous la ligne Quantite          -->
+    <!-- ============================================================== -->
+    <record id="mrp_production_form_view_material_yield" model="ir.ui.view">
+        <field name="name">mrp.production.form.material.yield</field>
+        <field name="model">mrp.production</field>
+        <field name="inherit_id" ref="mrp.mrp_production_form_view"/>
+        <field name="arch" type="xml">
+            <!--
+                Ancre : le label du champ BoM, qui suit immediatement le bloc
+                "Quantite X / X kg A produire" dans le groupe de gauche.
+                On se place "before" pour inserer entre les deux.
+            -->
+            <xpath expr="//label[@name='bom_label']" position="before">
+                <field name="yield_state" invisible="1"/>
+
+                <!-- Rendement global : uniquement quand il veut dire quelque chose -->
+                <label for="material_yield" string="Rendement"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+                <div class="o_row" invisible="yield_state not in ('ok', 'approx', 'over_100')">
+                    <!--
+                        Le chiffre lui-meme passe en rouge sur over_100, pas
+                        seulement la banniere : un utilisateur qui balaie
+                        l'ecran sans lire l'alerte manquerait l'anomalie.
+                    -->
+                    <field name="material_yield" readonly="1" nolabel="1"
+                           digits="[16, 2]"
+                           class="oe_inline text-start"
+                           decoration-danger="yield_state == 'over_100'"
+                           style="width:auto!important"/>
+                    <span class="oe_inline">%</span>
+                    <span class="oe_inline text-muted">dont utile</span>
+                    <field name="yield_useful_pct" readonly="1" nolabel="1"
+                           digits="[16, 2]"
+                           class="oe_inline text-muted text-start"
+                           style="width:auto!important"/>
+                    <span class="oe_inline text-muted">%</span>
+                </div>
+
+                <label for="yield_waste_qty" string="Déchets"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+                <div class="o_row" invisible="yield_state not in ('ok', 'approx', 'over_100')">
+                    <field name="yield_waste_qty" readonly="1" nolabel="1"
+                           class="oe_inline text-start"
+                           style="width:auto!important"/>
+                    <field name="yield_uom_id" readonly="1" nolabel="1"
+                           options="{'no_open': True, 'no_create': True}"
+                           class="oe_inline flex-grow-0"
+                           style="width:auto!important"/>
+                    <span class="oe_inline text-muted">(</span>
+                    <field name="yield_waste_pct" readonly="1" nolabel="1"
+                           digits="[16, 2]"
+                           class="oe_inline text-muted text-start"
+                           style="width:auto!important"/>
+                    <span class="oe_inline text-muted">%)</span>
+                </div>
+
+                <label for="yield_loss_qty" string="Perte"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+                <div class="o_row" invisible="yield_state not in ('ok', 'approx', 'over_100')">
+                    <field name="yield_loss_qty" readonly="1" nolabel="1"
+                           class="oe_inline text-start"
+                           style="width:auto!important"/>
+                    <field name="yield_uom_id" readonly="1" nolabel="1"
+                           options="{'no_open': True, 'no_create': True}"
+                           class="oe_inline flex-grow-0"
+                           style="width:auto!important"/>
+                    <span class="oe_inline text-muted">(</span>
+                    <field name="yield_loss_pct" readonly="1" nolabel="1"
+                           digits="[16, 2]"
+                           class="oe_inline text-muted text-start"
+                           style="width:auto!important"/>
+                    <span class="oe_inline text-muted">%)</span>
+                </div>
+
+                <!--
+                    Approximatif : les valeurs SONT affichees, mais l'ecran dit
+                    qu'elles resultent d'une somme kg + litres. Le message
+                    nomme les produits fautifs et leur categorie d'UdM, pour
+                    que l'utilisateur sache quelle fiche corriger sans enqueter.
+                -->
+                <div class="alert alert-info mb-2" role="alert"
+                     colspan="2"
+                     invisible="yield_state != 'approx'">
+                    <field name="yield_warning" readonly="1" nolabel="1"/>
+                </div>
+
+                <!--
+                    Rendement > 100 % : physiquement impossible, donc anomalie
+                    de saisie. La valeur reste AFFICHEE, en rouge : c'est le
+                    seul ecran ou l'exploitation peut reperer l'erreur. La
+                    masquer reviendrait a cacher le probleme.
+                -->
+                <div class="alert alert-danger mb-2" role="alert"
+                     colspan="2"
+                     invisible="yield_state != 'over_100'">
+                    <field name="yield_warning" readonly="1" nolabel="1"/>
+                </div>
+
+                <!--
+                    Unites incompatibles : on n'affiche AUCUN pourcentage,
+                    seulement l'explication. Un nombre faux serait pire que
+                    pas de nombre du tout.
+                -->
+                <div class="alert alert-warning mb-2" role="alert"
+                     colspan="2"
+                     invisible="yield_state != 'uom_mixed'">
+                    <field name="yield_warning" readonly="1" nolabel="1"/>
+                </div>
+            </xpath>
+
+            <!-- ======================================================== -->
+            <!-- Onglet Sous-produits : rendement par ligne               -->
+            <!-- ======================================================== -->
+            <!--
+                La liste des sous-produits est une liste INLINE definie dans
+                mrp.mrp_production_form_view, page name="finished_products"
+                (mrp/views/mrp_production_views.xml:484-536). On cible donc un
+                champ nomme de cette liste, pas une vue liste autonome.
+
+                `sum` sur cette colonne n'est pas cosmetique : tous les
+                sous-produits partagent le meme denominateur, donc la somme des
+                pourcentages de ligne EST le rendement global. La ligne de
+                total doit afficher la meme valeur que l'en-tete. Si les deux
+                divergent a l'ecran, c'est le signal d'un bug : controle
+                gratuit, a conserver.
+            -->
+            <xpath expr="//page[@name='finished_products']//field[@name='cost_share']"
+                   position="before">
+                <field name="yield_parent_state" column_invisible="True"/>
+                <field name="yield_pct" string="Rendement %"
+                       readonly="1"
+                       digits="[16, 2]"
+                       sum="Rendement total"
+                       invisible="yield_parent_state not in ('ok', 'approx', 'over_100')"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Vue liste OF : colonne rendement optionnelle                   -->
+    <!-- ============================================================== -->
+    <record id="mrp_production_tree_view_material_yield" model="ir.ui.view">
+        <field name="name">mrp.production.list.material.yield</field>
+        <field name="model">mrp.production</field>
+        <field name="inherit_id" ref="mrp.mrp_production_tree_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='product_qty']" position="after">
+                <field name="yield_state" column_invisible="True"/>
+                <!--
+                    Masque ligne a ligne quand le rendement n'est pas
+                    calculable : la cellule reste vide plutot que d'afficher
+                    un 0,00 % trompeur.
+                -->
+                <field name="material_yield" string="Rendement %"
+                       optional="show" readonly="1" digits="[16, 2]"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"
+                       decoration-danger="yield_state == 'over_100' or (yield_state in ('ok', 'approx') and material_yield &lt; 90)"
+                       decoration-warning="yield_state in ('ok', 'approx') and material_yield &gt;= 90 and material_yield &lt; 95"/>
+                <field name="yield_useful_pct" string="Rendement utile %"
+                       optional="hide" readonly="1" digits="[16, 2]"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+                <field name="yield_waste_qty" string="Déchets"
+                       optional="hide" readonly="1"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+                <field name="yield_loss_qty" string="Perte"
+                       optional="hide" readonly="1"
+                       invisible="yield_state not in ('ok', 'approx', 'over_100')"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Recherche : filtres rendement                                   -->
+    <!-- ============================================================== -->
+    <record id="view_mrp_production_filter_material_yield" model="ir.ui.view">
+        <field name="name">mrp.production.select.material.yield</field>
+        <field name="model">mrp.production</field>
+        <field name="inherit_id" ref="mrp.view_mrp_production_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='filter_cancel']" position="after">
+                <separator/>
+                <!--
+                    Les filtres portent sur les etats qui ont une valeur
+                    ('ok' et 'approx') : sans cela ils remonteraient les OF
+                    sans sous-produit, dont le rendement stocke vaut 0 par
+                    convention de neutralisation. Bornes aussi aux OF
+                    termines : sur un OF en cours le rendement est provisoire.
+                    Les OF 'approx' sont inclus a dessein : leur erreur est
+                    bornee, les exclure ferait disparaitre des OF reels des
+                    statistiques.
+                -->
+                <filter string="Rendement &lt; 90 %" name="filter_yield_below_90"
+                        domain="[('yield_state', 'in', ['ok', 'approx']),
+                                 ('state', '=', 'done'),
+                                 ('material_yield', '&lt;', 90)]"/>
+                <filter string="Rendement &lt; 95 %" name="filter_yield_below_95"
+                        domain="[('yield_state', 'in', ['ok', 'approx']),
+                                 ('state', '=', 'done'),
+                                 ('material_yield', '&lt;', 95)]"/>
+                <filter string="Rendement approximatif"
+                        name="filter_yield_approx"
+                        help="OF dont le rendement additionne des poids et des volumes sans conversion : valeur approximative"
+                        domain="[('yield_state', '=', 'approx')]"/>
+                <filter string="Rendement &gt; 100 % (anomalie)"
+                        name="filter_yield_over_100"
+                        help="OF sortant plus de matière qu'ils n'en engagent : anomalie de saisie, exclus des moyennes"
+                        domain="[('yield_state', '=', 'over_100')]"/>
+                <filter string="Unites incompatibles"
+                        name="filter_yield_uom_mixed"
+                        help="OF dont les composants et sous-produits n'ont pas des unités additionnables"
+                        domain="[('yield_state', '=', 'uom_mixed')]"/>
+            </xpath>
+            <!--
+                Le regroupement doit atterrir dans le bloc "Group By..." du
+                core, pas dans la liste des filtres. Ancre nommee plutot que
+                //group[@string='...'] : le string est traduit.
+            -->
+            <xpath expr="//filter[@name='groupby_reservation_state']"
+                   position="after">
+                <filter string="État du rendement" name="groupby_yield_state"
+                        domain="[]" context="{'group_by': 'yield_state'}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Categorie de produit : marqueur dechet                          -->
+    <!-- ============================================================== -->
+    <record id="product_category_form_view_material_yield" model="ir.ui.view">
+        <field name="name">product.category.form.material.yield</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='first']" position="inside">
+                <!--
+                    Restriction au niveau de la VUE, volontairement, et ciblee
+                    sur les roles qui administrent reellement les categories.
+                    Deux raisons, toutes deux verifiees dans le core.
+
+                    1. Pourquoi PAS `groups=` sur la definition du champ.
+                       Un `groups=` au niveau champ est applique par l'ORM :
+                       `check_field_access_rights` (models.py:3771-3801) leve
+                       AccessError des qu'un utilisateur hors du groupe LIT le
+                       champ. Or `_compute_material_yield` lit
+                       `...categ_id.is_waste_byproduct` et se declenche a la
+                       validation d'un OF, dans l'environnement de l'operateur.
+                       Un operateur `mrp.group_mrp_user` ne pourrait plus
+                       valider ses OF. Le compute n'est pas en sudo, et il ne
+                       doit pas l'etre.
+
+                    2. Pourquoi PAS `mrp.group_mrp_manager`.
+                       L'ACL de `product.category` (product/security et
+                       stock/security) n'accorde l'ecriture qu'a
+                       `product.group_product_manager` et
+                       `stock.group_stock_manager` ; `base.group_user` est en
+                       lecture seule (1,0,0,0) et `mrp.group_mrp_manager` n'a
+                       aucun droit d'ecriture. Restreindre au groupe MRP
+                       masquerait donc le champ aux SEULES personnes capables
+                       de le regler.
+
+                    La protection contre « n'importe qui deplace un KPI » est
+                    deja portee par l'ACL du modele : un utilisateur ordinaire
+                    ne peut pas ecrire une categorie de produit.
+                -->
+                <field name="is_waste_byproduct"
+                       groups="product.group_product_manager,stock.group_stock_manager"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Categorie d'UdM : assimilation au poids                         -->
+    <!-- ============================================================== -->
+    <record id="product_uom_categ_form_view_material_yield" model="ir.ui.view">
+        <field name="name">uom.category.form.material.yield</field>
+        <field name="model">uom.category</field>
+        <field name="inherit_id" ref="uom.product_uom_categ_form_view"/>
+        <field name="arch" type="xml">
+            <!--
+                Pas de `groups=` : l'ACL de `uom.category` restreint deja
+                l'ecriture a base.group_system, mrp.group_mrp_manager,
+                purchase.group_purchase_manager, sales_team.group_sale_manager
+                et stock.group_stock_manager. `base.group_user` et
+                `mrp.group_mrp_user` y sont en lecture seule (1,0,0,0).
+                Restreindre davantage masquerait le champ a une partie des
+                roles habilites sans rien proteger de plus.
+            -->
+            <xpath expr="//field[@name='reference_uom_id']" position="after">
+                <field name="yield_mass_equivalent"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
