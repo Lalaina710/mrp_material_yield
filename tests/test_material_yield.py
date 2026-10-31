@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import Command
+from odoo.exceptions import UserError
 from odoo.tests import TransactionCase, tagged
 
 
@@ -207,6 +208,13 @@ class TestMaterialYield(TransactionCase):
         covered = set(Production._YIELD_QTY_FIELDS) | set(
             Production._YIELD_PCT_FIELDS
         ) | {"yield_uom_id", "yield_state"}
+        # La constante qui alimente le verrou d'ecriture couvre le meme
+        # ensemble, sans doublon.
+        self.assertEqual(set(Production._YIELD_COMPUTED_FIELDS), declared)
+        self.assertEqual(
+            len(Production._YIELD_COMPUTED_FIELDS), len(declared),
+            "Doublon dans _YIELD_COMPUTED_FIELDS",
+        )
 
         self.assertEqual(
             declared, covered,
@@ -616,3 +624,117 @@ class TestMaterialYield(TransactionCase):
         self.assertEqual(mo.yield_waste_qty, 0.0)
         self.assertAlmostEqual(mo.yield_useful_pct, mo.material_yield, places=9)
         self._assert_invariant(mo)
+
+    # ------------------------------------------------------------------
+    # Verrou d'ecriture des champs calcules (finding qa/secu 06/10)
+    # ------------------------------------------------------------------
+    def _mrp_user(self):
+        return self.env["res.users"].with_context(no_reset_password=True).create({
+            "name": "MRP user (test rendement)",
+            "login": "mrp_user_material_yield_test",
+            "company_id": self.env.company.id,
+            "company_ids": [Command.set(self.env.company.ids)],
+            "groups_id": [Command.set([
+                self.env.ref("base.group_user").id,
+                self.env.ref("mrp.group_mrp_user").id,
+            ])],
+        })
+
+    def _nominal_mo(self):
+        return self._make_mo(
+            components=[(self._product("TRSOL03"), 100.0)],
+            byproducts=[(self._product("FILET"), 80.0)],
+        )
+
+    def test_14_write_yield_field_refused_for_mrp_user(self):
+        """Un utilisateur MRP ne peut ecrire AUCUN des 11 champs par RPC."""
+        mo = self._nominal_mo()
+        self.assertAlmostEqual(mo.material_yield, 80.0, places=6)
+        mo_as_user = mo.with_user(self._mrp_user())
+        values = {
+            "yield_uom_id": self.uom_litre.id,
+            "yield_state": "ok",
+        }
+        values.update(dict.fromkeys(
+            mo._YIELD_QTY_FIELDS + mo._YIELD_PCT_FIELDS, 99.0
+        ))
+        for name, value in values.items():
+            with self.subTest(field=name), self.assertRaises(UserError):
+                mo_as_user.write({name: value})
+        # Melange champ normal + champ calcule : tout est refuse, rien n'est
+        # ecrit.
+        with self.assertRaises(UserError):
+            mo_as_user.write({"origin": "RPC", "material_yield": 99.0})
+        mo.invalidate_recordset()
+        self.assertAlmostEqual(mo.material_yield, 80.0, places=6)
+        self.assertNotEqual(mo.origin, "RPC")
+
+    def test_15_create_with_yield_field_refused(self):
+        """`create` refuse aussi, y compris noye dans un lot de valeurs."""
+        pivot = self._product("PIVOT")
+        base_vals = {
+            "product_id": pivot.id,
+            "product_uom_id": pivot.uom_id.id,
+            "product_qty": 10.0,
+        }
+        Production = self.env["mrp.production"]
+        Production_as_user = Production.with_user(self._mrp_user())
+        with self.assertRaises(UserError):
+            Production_as_user.create(dict(base_vals, material_yield=99.0))
+        with self.assertRaises(UserError):
+            Production.create([base_vals, dict(base_vals, yield_state="ok")])
+        # Sans champ calcule, la creation passe ; le defaut de `yield_state`
+        # (ajoute en aval du verrou) ne declenche pas le refus.
+        mo = Production_as_user.create(base_vals)
+        self.assertEqual(mo.yield_state, "no_input")
+        # Champ normal ecrit apres coup : permis.
+        mo.write({"product_qty": 12.0})
+        self.assertEqual(mo.product_qty, 12.0)
+
+    def test_16_admin_and_superuser_refused_too(self):
+        """Champ calcule : personne ne le saisit, administrateur compris."""
+        mo = self._nominal_mo()
+        with self.assertRaises(UserError):
+            mo.write({"material_yield": 99.0})  # superuser (env des tests)
+        with self.assertRaises(UserError):
+            mo.with_user(self.env.ref("base.user_admin")).write(
+                {"yield_state": "over_100"}
+            )
+        with self.assertRaises(UserError):
+            mo.sudo().write({"yield_loss_pct": 0.0})
+
+    def test_17_normal_write_still_recomputes(self):
+        """Ecrire un champ normal reste permis et le rendement suit."""
+        mo = self._make_mo(
+            components=[(self._product("TRSOL03"), 100.0)],
+            byproducts=[(self._product("FILET"), 80.0,
+                         {"picked": False, "state": "confirmed",
+                          "quantity": 0.0})],
+        )
+        self.assertAlmostEqual(mo.material_yield, 80.0, places=6)
+        mo_as_user = mo.with_user(self._mrp_user())
+        # `product_qty` n'est volontairement pas utilise ici : sur un OF
+        # brouillon, `_compute_move_finished_ids` (mrp_production.py:775)
+        # recree les moves finis et efface les sous-produits du test.
+        byproduct_move = mo.move_finished_ids.filtered(
+            lambda m: m.product_id != mo.product_id
+        )
+        mo_as_user.write({
+            "origin": "TEST-17",
+            "move_finished_ids": [
+                Command.update(byproduct_move.id, {"product_uom_qty": 90.0}),
+            ],
+        })
+        mo.invalidate_recordset()
+        self.assertEqual(mo.origin, "TEST-17")
+        self.assertAlmostEqual(mo.material_yield, 90.0, places=6)
+        self._assert_invariant(mo)
+
+    def test_18_copy_not_blocked(self):
+        """`copy()` ne transporte pas les champs calcules (copy=False)."""
+        mo = self._nominal_mo()
+        clone = mo.copy()
+        self.assertTrue(clone)
+        self.assertIn(clone.yield_state, dict(
+            clone._fields["yield_state"].selection
+        ))

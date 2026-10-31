@@ -35,7 +35,7 @@
     # poids + volume. `yield_state` gagne deux valeurs au total : les
     # consommateurs doivent traiter 'approx' ET 'over_100' (mrp_dashboard
     # prevenu).
-    'version': '18.0.1.8.0',
+    'version': '18.0.1.9.1',
     'category': 'Manufacturing',
     'summary': 'Rendement matiere reel des OF (sous-produits / composants)',
     'description': """

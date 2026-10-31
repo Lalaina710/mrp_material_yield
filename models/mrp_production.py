@@ -2,6 +2,7 @@
 import logging
 
 from odoo import _, api, fields, models
+from odoo.exceptions import UserError
 from odoo.tools import float_compare, float_is_zero
 from odoo.tools.misc import formatLang
 
@@ -29,6 +30,14 @@ class MrpProduction(models.Model):
         "yield_waste_pct",
         "yield_useful_pct",
         "yield_loss_pct",
+    )
+    # Les 11 champs stockes calcules par `_compute_material_yield` : les 9
+    # numeriques + les 2 non numeriques. Ensemble verifie contre le registre
+    # ORM par `test_00_declared_fields_match_constants`. Sert au verrou
+    # d'ecriture de `create` / `write` ci-dessous.
+    _YIELD_COMPUTED_FIELDS = _YIELD_QTY_FIELDS + _YIELD_PCT_FIELDS + (
+        "yield_uom_id",
+        "yield_state",
     )
 
     # ------------------------------------------------------------------
@@ -193,6 +202,56 @@ class MrpProduction(models.Model):
         help="Message affiché lorsque le rendement est approximatif, "
              "anormal, ou non calculable. Vide dans le cas nominal.",
     )
+
+    # ------------------------------------------------------------------
+    # Verrou d'ecriture des champs calcules
+    # ------------------------------------------------------------------
+    # `readonly=True` ne protege que l'interface : par RPC, un utilisateur
+    # MRP peut ecrire ces colonnes et fausser le KPI direction jusqu'au
+    # prochain recalcul. On refuse donc toute ecriture explicite, y compris
+    # pour l'administrateur : ces valeurs sont calculees, personne ne doit
+    # les saisir.
+    #
+    # Aucun contexte d'exception n'est necessaire, verifie sur le source 18 :
+    #   - le recalcul ORM passe par `Field.__set__` sur des enregistrements
+    #     proteges -> `Field.write` (cache + dirty, fields.py:1382-1398), puis
+    #     `_flush` -> `_write_multi` (models.py:6844) ; jamais `write()` ;
+    #   - le backfill d'installation / upgrade emprunte ce meme chemin ;
+    #   - `copy()` / `_split_productions` passent par `copy_data`, qui ignore
+    #     les champs `copy=False` -- defaut d'un champ calcule readonly
+    #     (fields.py:445-447) ;
+    #   - les valeurs par defaut (`yield_state`) sont ajoutees par
+    #     `_add_missing_default_values`, en aval de ce `create` ;
+    #   - le client web n'envoie pas les champs readonly sans `force_save`
+    #     (record.js:635-641) ;
+    #   - ni ce module, ni sa migration n'ecrivent ces champs via `write()`.
+    def _check_yield_fields_not_written(self, vals_list):
+        written = {
+            name for vals in vals_list for name in vals
+            if name in self._YIELD_COMPUTED_FIELDS
+        }
+        if not written:
+            return
+        labels = ", ".join(
+            f"« {self._fields[name]._description_string(self.env)} »"
+            for name in self._YIELD_COMPUTED_FIELDS
+            if name in written
+        )
+        raise UserError(_(
+            "Les champs de rendement matière sont calculés automatiquement à "
+            "partir des mouvements de l'ordre de fabrication et ne peuvent pas "
+            "être saisis : %(fields)s.",
+            fields=labels,
+        ))
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        self._check_yield_fields_not_written(vals_list)
+        return super().create(vals_list)
+
+    def write(self, vals):
+        self._check_yield_fields_not_written([vals])
+        return super().write(vals)
 
     # ------------------------------------------------------------------
     # Calcul

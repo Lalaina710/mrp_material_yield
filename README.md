@@ -387,13 +387,16 @@ odoo-bin -d <base> -u mrp_material_yield --test-enable \
          --test-tags /mrp_material_yield --stop-after-init
 ```
 
-17 tests dans `tests/test_material_yield.py`. Couverture : OF nominal
+22 tests dans `tests/test_material_yield.py`. Couverture : OF nominal
 (`US/MO/01877`), non-recomposition des pourcentages arrondis, Σ lignes =
 en-tête, `no_byproduct`, `no_input`, OF annulé, `uom_mixed`, `approx`,
 composant à 3 décimales, `over_100`, seuil relatif, move non `picked`, drapeau
 déchet, et trois cas sur `yield_mass_equivalent` : trois catégories dont une non
 cochée → `uom_mixed`, les trois cochées → `approx` à 94,68 %, et réversibilité du
-flag (décocher rebascule en `uom_mixed`).
+flag (décocher rebascule en `uom_mixed`). Depuis 18.0.1.9.0 : verrou
+d'écriture (`write` refusé pour un utilisateur MRP, `create` refusé, admin et
+superuser refusés aussi, écriture d'un champ normal permise avec recalcul,
+`copy()` non bloqué).
 
 Le premier (`test_00_declared_fields_match_constants`) est un **contrôle
 statique ensemble-contre-ensemble** : il compare les champs déclarés
@@ -430,6 +433,24 @@ odoo-bin -d <base> --i18n-export=i18n/mrp_material_yield.pot \
   `mrp_byproduct_costshare_autobranch`, ni `mrp_dashboard`.
 - Aucun `sudo()`. Aucun modèle nouveau, donc pas de `ir.model.access.csv`.
 - Aucune donnée envoyée à un service externe.
+
+## Historique des versions
+
+- **18.0.1.9.1** — `i18n/mrp_material_yield.pot` régénéré par
+  `--i18n-export` (base 45) : ajout du message `UserError` du verrou
+  d'écriture (`_check_yield_fields_not_written`) et de 14 termes absents du
+  `.pot` précédent (champ `yield_mass_equivalent`, noms de modèles, libellés
+  de vues). Aucun changement de code.
+- **18.0.1.9.0** — Verrou d'écriture des 11 champs calculés stockés
+  (`_YIELD_COMPUTED_FIELDS`) : `create` / `write` sur `mrp.production` lèvent
+  une `UserError` si les valeurs contiennent l'un d'eux, quel que soit
+  l'utilisateur (administrateur compris). `readonly=True` ne protégeait que
+  l'interface ; par RPC un utilisateur MRP pouvait fausser le KPI direction
+  jusqu'au recalcul suivant. Aucun contexte d'exception : le recalcul ORM et
+  le backfill passent par le cache puis `_write_multi`, jamais par `write()`.
+  5 tests ajoutés (22 au total).
+- **18.0.1.8.0** — Catégories d'UdM assimilables au poids configurables
+  (`uom.category.yield_mass_equivalent`) + script de migration.
 
 ## Licence
 
